@@ -1,2 +1,3 @@
 # Chirpy
-Project for course "" from bootdev.org
+Project for course "Learn HTTP Servers" from [boot.dev](https://www.boot.dev/).
+
