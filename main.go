@@ -5,6 +5,7 @@ import (
   "encoding/json"
   "net/http"
   "sync/atomic"
+  "strings"
 )
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -42,35 +43,53 @@ func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
   w.WriteHeader(http.StatusOK);
 }
 
+func sendJSONResponse(w http.ResponseWriter, code int, payload interface{}) {
+  data, err := json.Marshal(payload)
+  if err != nil {
+    data = []byte(fmt.Sprintf(`{"error":"Error marshalling JSON: %s}"`, err))
+    code = http.StatusInternalServerError
+  }
+  w.Header().Set("Content-Type", "application/json")
+  w.WriteHeader(code)
+  w.Write(data)
+}
+
 type validateError struct {
   Error string `json:"error"`
 }
 
 func (e *validateError) sendResponse(w http.ResponseWriter, code int) {
-  data, err := json.Marshal(e)
-  if err != nil {
-    data = []byte(fmt.Sprintf(`{"error":"Error marshalling JSON: %s}"`, err))
-    code = http.StatusInternalServerError
-  }
-  w.Header().Set("Content-Type", "application/json")
-  w.WriteHeader(code)
-  w.Write(data)
+  sendJSONResponse(w, code, e)
 }
 
 type validateOK struct {
-  Valid bool `json:"valid"`
+  Body string `json:"cleaned_body"`
 }
 
 func (o *validateOK) sendResponse(w http.ResponseWriter) {
-  code := http.StatusOK
-  data, err := json.Marshal(o)
-  if err != nil {
-    data = []byte(fmt.Sprintf(`{"error":"Error marshalling JSON: %s}"`, err))
-    code = http.StatusInternalServerError
+  sendJSONResponse(w, http.StatusOK, o)
+}
+
+func cleanChirp(chirp string) string {
+  s := strings.Split(chirp, " ")
+  var c []string
+  for i := 0; i < len(s); i++ {
+    censor := false
+    switch l := strings.ToLower(s[i]); l {
+      case "kerfuffle":
+        censor = true
+      case "sharbert":
+        censor = true
+      case "fornax":
+        censor = true
+    }
+    if censor {
+      c = append(c, "****")
+    } else {
+      c = append(c, s[i])
+    }
   }
-  w.Header().Set("Content-Type", "application/json")
-  w.WriteHeader(code)
-  w.Write(data)
+  return strings.Join(c, " ")
 }
 
 func validateChirp(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +112,7 @@ func validateChirp(w http.ResponseWriter, r *http.Request) {
       errmsg.sendResponse(w, http.StatusBadRequest)
     } else {
       okmsg := validateOK{
-        Valid: true,
+        Body: cleanChirp(ch.Body),
       }
       okmsg.sendResponse(w)
     }
