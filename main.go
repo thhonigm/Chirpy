@@ -79,18 +79,6 @@ type jsonError struct {
 	Error string `json:"error"`
 }
 
-func (e *jsonError) sendResponse(w http.ResponseWriter, code int) {
-	sendJSONResponse(w, code, e)
-}
-
-type validateOK struct {
-	Body string `json:"cleaned_body"`
-}
-
-func (o *validateOK) sendResponse(w http.ResponseWriter) {
-	sendJSONResponse(w, http.StatusOK, o)
-}
-
 func cleanChirp(chirp string) string {
 	s := strings.Split(chirp, " ")
 	var c []string
@@ -113,31 +101,49 @@ func cleanChirp(chirp string) string {
 	return strings.Join(c, " ")
 }
 
-func validateChirp(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request) {
 	type chirp struct {
-		Body string `json:"body"`
+		Body   string    `json:"body"`
+		UserID uuid.UUID `json:"user_id"`
 	}
-	decoder := json.NewDecoder(r.Body)
 	ch := chirp{}
-	err := decoder.Decode(&ch)
+	err := json.NewDecoder(r.Body).Decode(&ch)
 	if err != nil {
-		errmsg := jsonError{
+		sendJSONResponse(w, http.StatusInternalServerError, jsonError{
 			Error: fmt.Sprintf("Error decoding JSON: %v", err),
-		}
-		errmsg.sendResponse(w, http.StatusInternalServerError)
-	} else {
-		if len(ch.Body) > 140 {
-			errmsg := jsonError{
-				Error: "Chirp is too long",
-			}
-			errmsg.sendResponse(w, http.StatusBadRequest)
-		} else {
-			okmsg := validateOK{
-				Body: cleanChirp(ch.Body),
-			}
-			okmsg.sendResponse(w)
-		}
+		})
+		return
 	}
+	if len(ch.Body) > 140 {
+		sendJSONResponse(w, http.StatusBadRequest, jsonError{
+			Error: "Chirp is too long",
+		})
+		return
+	}
+	user, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
+		Body:   cleanChirp(ch.Body),
+		UserID: ch.UserID,
+	})
+	if err != nil {
+		sendJSONResponse(w, http.StatusInternalServerError, jsonError{
+			Error: fmt.Sprintf("Error creating chirp: %v", err),
+		})
+		return
+	}
+	type chirpCreated struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserID    uuid.UUID `json:"user_id"`
+	}
+	sendJSONResponse(w, http.StatusCreated, chirpCreated{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Body:      user.Body,
+		UserID:    user.UserID,
+	})
 }
 
 func (cfg *apiConfig) usersHandler(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +196,7 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)
 	mux.HandleFunc("GET /api/healthz", healthHandler)
 	mux.HandleFunc("POST /api/users", apiCfg.usersHandler)
-	mux.HandleFunc("POST /api/validate_chirp", validateChirp)
+	mux.HandleFunc("POST /api/chirps", apiCfg.chirpsHandler)
 	var srv http.Server
 	srv.Handler = mux
 	srv.Addr = ":8080"
