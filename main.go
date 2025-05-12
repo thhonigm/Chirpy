@@ -53,7 +53,7 @@ func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
 	if cfg.platform == "dev" {
 		err := cfg.db.DeleteUsers(r.Context())
 		if err != nil {
-			sendJSONResponse(w, http.StatusInternalServerError, jsonError{
+			sendJSONResponse(w, http.StatusInternalServerError, errorJSON{
 				Error: fmt.Sprintf("Error deleting users: %v", err),
 			})
 			return
@@ -75,8 +75,16 @@ func sendJSONResponse(w http.ResponseWriter, code int, payload interface{}) {
 	w.Write(data)
 }
 
-type jsonError struct {
+type errorJSON struct {
 	Error string `json:"error"`
+}
+
+type chirpJSON struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
 }
 
 func cleanChirp(chirp string) string {
@@ -101,7 +109,28 @@ func cleanChirp(chirp string) string {
 	return strings.Join(c, " ")
 }
 
-func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) chirpsGetHandler(w http.ResponseWriter, r *http.Request) {
+	sql_chirps, err := cfg.db.RetrieveAllChirps(r.Context())
+	if err != nil {
+		sendJSONResponse(w, http.StatusInternalServerError, errorJSON{
+			Error: fmt.Sprintf("Error retrieving chirps: %v", err),
+		})
+		return
+	}
+	var chirps []chirpJSON
+	for _, chirp := range sql_chirps {
+		chirps = append(chirps, chirpJSON{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserID:    chirp.UserID,
+		})
+	}
+	sendJSONResponse(w, http.StatusOK, chirps)
+}
+
+func (cfg *apiConfig) chirpsPostHandler(w http.ResponseWriter, r *http.Request) {
 	type chirp struct {
 		Body   string    `json:"body"`
 		UserID uuid.UUID `json:"user_id"`
@@ -109,13 +138,13 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request) {
 	ch := chirp{}
 	err := json.NewDecoder(r.Body).Decode(&ch)
 	if err != nil {
-		sendJSONResponse(w, http.StatusInternalServerError, jsonError{
+		sendJSONResponse(w, http.StatusInternalServerError, errorJSON{
 			Error: fmt.Sprintf("Error decoding JSON: %v", err),
 		})
 		return
 	}
 	if len(ch.Body) > 140 {
-		sendJSONResponse(w, http.StatusBadRequest, jsonError{
+		sendJSONResponse(w, http.StatusBadRequest, errorJSON{
 			Error: "Chirp is too long",
 		})
 		return
@@ -125,19 +154,12 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request) {
 		UserID: ch.UserID,
 	})
 	if err != nil {
-		sendJSONResponse(w, http.StatusInternalServerError, jsonError{
+		sendJSONResponse(w, http.StatusInternalServerError, errorJSON{
 			Error: fmt.Sprintf("Error creating chirp: %v", err),
 		})
 		return
 	}
-	type chirpCreated struct {
-		ID        uuid.UUID `json:"id"`
-		CreatedAt time.Time `json:"created_at"`
-		UpdatedAt time.Time `json:"updated_at"`
-		Body      string    `json:"body"`
-		UserID    uuid.UUID `json:"user_id"`
-	}
-	sendJSONResponse(w, http.StatusCreated, chirpCreated{
+	sendJSONResponse(w, http.StatusCreated, chirpJSON{
 		ID:        user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
@@ -154,25 +176,25 @@ func (cfg *apiConfig) usersHandler(w http.ResponseWriter, r *http.Request) {
 	p := params{}
 	err := decoder.Decode(&p)
 	if err != nil {
-		sendJSONResponse(w, http.StatusInternalServerError, jsonError{
+		sendJSONResponse(w, http.StatusInternalServerError, errorJSON{
 			Error: fmt.Sprintf("Error decoding JSON: %v", err),
 		})
 		return
 	}
 	user, err := cfg.db.CreateUser(r.Context(), p.Email)
 	if err != nil {
-		sendJSONResponse(w, http.StatusInternalServerError, jsonError{
+		sendJSONResponse(w, http.StatusInternalServerError, errorJSON{
 			Error: fmt.Sprintf("Error creating user: %v", err),
 		})
 		return
 	}
-	type userCreated struct {
+	type userJSON struct {
 		ID        uuid.UUID `json:"id"`
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 		Email     string    `json:"email"`
 	}
-	sendJSONResponse(w, http.StatusCreated, userCreated{
+	sendJSONResponse(w, http.StatusCreated, userJSON{
 		ID:        user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
@@ -192,13 +214,16 @@ func main() {
 	apiCfg.platform = os.Getenv("PLATFORM")
 	mux := http.NewServeMux()
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
-	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)
+	mux.HandleFunc("GET  /admin/metrics", apiCfg.metricsHandler)
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)
-	mux.HandleFunc("GET /api/healthz", healthHandler)
+	mux.HandleFunc("GET  /api/chirps", apiCfg.chirpsGetHandler)
+	mux.HandleFunc("POST /api/chirps", apiCfg.chirpsPostHandler)
+	mux.HandleFunc("GET  /api/healthz", healthHandler)
 	mux.HandleFunc("POST /api/users", apiCfg.usersHandler)
-	mux.HandleFunc("POST /api/chirps", apiCfg.chirpsHandler)
 	var srv http.Server
 	srv.Handler = mux
 	srv.Addr = ":8080"
 	srv.ListenAndServe()
 }
+
+// vim:ts=2
