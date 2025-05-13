@@ -1,13 +1,12 @@
 package main
 
-import _ "github.com/lib/pq"
-
 import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 	"github.com/thhonigm/Chirpy/internal/database"
 	"net/http"
 	"os"
@@ -130,6 +129,31 @@ func (cfg *apiConfig) chirpsGetHandler(w http.ResponseWriter, r *http.Request) {
 	sendJSONResponse(w, http.StatusOK, chirps)
 }
 
+func (cfg *apiConfig) chirpGetByIDHandler(w http.ResponseWriter, r *http.Request) {
+	id_str := r.PathValue("id")
+	id, err := uuid.Parse(id_str)
+	if err != nil {
+		sendJSONResponse(w, http.StatusInternalServerError, errorJSON{
+			Error: fmt.Sprintf("Error parsing UUID '%v': %v", id_str, err),
+		})
+		return
+	}
+	chirp, err := cfg.db.RetrieveChirp(r.Context(), id)
+	if err != nil {
+		sendJSONResponse(w, http.StatusInternalServerError, errorJSON{
+			Error: fmt.Sprintf("Error retrieving chirp for %v: %v", id, err),
+		})
+		return
+	}
+	sendJSONResponse(w, http.StatusOK, chirpJSON{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body:      chirp.Body,
+		UserID:    chirp.UserID,
+	})
+}
+
 func (cfg *apiConfig) chirpsPostHandler(w http.ResponseWriter, r *http.Request) {
 	type chirp struct {
 		Body   string    `json:"body"`
@@ -217,6 +241,7 @@ func main() {
 	mux.HandleFunc("GET  /admin/metrics", apiCfg.metricsHandler)
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)
 	mux.HandleFunc("GET  /api/chirps", apiCfg.chirpsGetHandler)
+	mux.HandleFunc("GET  /api/chirps/{id}", apiCfg.chirpGetByIDHandler)
 	mux.HandleFunc("POST /api/chirps", apiCfg.chirpsPostHandler)
 	mux.HandleFunc("GET  /api/healthz", healthHandler)
 	mux.HandleFunc("POST /api/users", apiCfg.usersHandler)
